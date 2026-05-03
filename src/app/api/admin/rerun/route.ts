@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -19,10 +21,10 @@ export async function POST(request: NextRequest) {
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
-  fetch(`${siteUrl}/api/ingest/${companyId}`, {
+  await fetch(`${siteUrl}/api/ingest/${companyId}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
-  }).catch(() => {});
+  });
 
   return NextResponse.json({ success: true });
 }
