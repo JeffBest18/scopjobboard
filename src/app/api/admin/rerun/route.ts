@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { runIngestion } from "@/lib/ingestion/run";
 
 export const maxDuration = 300;
 
@@ -20,11 +21,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid companyId" }, { status: 400 });
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
-  await fetch(`${siteUrl}/api/ingest/${companyId}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
-  });
-
-  return NextResponse.json({ success: true });
+  const result = await runIngestion(companyId);
+  return NextResponse.json(result);
 }
