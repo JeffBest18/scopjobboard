@@ -1,4 +1,7 @@
 import type { MetadataRoute } from "next";
+
+// Regenerate hourly; without this the sitemap was frozen at build time.
+export const revalidate = 3600;
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {

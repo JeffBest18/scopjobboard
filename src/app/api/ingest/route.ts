@@ -1,53 +1,74 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-// Max companies to ingest concurrently (each uses 1+ Hyperbrowser sessions)
-const BATCH_SIZE = 5;
+import { runIngestion, type IngestionResult } from "@/lib/ingestion/run";
+import { mapLimit } from "@/lib/ingestion/http";
 
 export const maxDuration = 300;
 
+const CONCURRENCY = 5;
+/** Stop starting new companies after this long, so in-flight ones can finish within maxDuration. */
+const START_BUDGET_MS = 200_000;
+
+/**
+ * Daily cron (see vercel.json). Ingests every enabled company in this one
+ * function, oldest-refreshed first. Previously this fanned out HTTP requests
+ * to /api/ingest/[companyId] and awaited each batch, which hit the 300s limit
+ * after the first batch or two, so later companies were never refreshed.
+ *
+ * Optional: ?company=<slug> to ingest a single company.
+ */
 export async function GET(request: NextRequest) {
-  // Auth check
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const supabase = createAdminClient();
+  const onlySlug = request.nextUrl.searchParams.get("company");
 
-  // Load all enabled companies that have a careers URL
-  const { data: companies, error } = await supabase
+  let query = supabase
     .from("companies")
-    .select("id, name")
+    .select("id, name, slug")
     .eq("enabled", true)
     .not("careers_url", "is", null);
+  if (onlySlug) query = query.eq("slug", onlySlug);
+  const { data: companies, error } = await query;
 
   if (error || !companies) {
-    return NextResponse.json(
-      { error: "Failed to load companies" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to load companies" }, { status: 500 });
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
-  const dispatched: string[] = [];
+  // Oldest attempt first, so if we ever run out of time the stalest get refreshed.
+  const { data: snaps } = await supabase
+    .from("snapshots")
+    .select("company_id, created_at")
+    .order("created_at", { ascending: false })
+    .limit(2000);
+  const lastAttempt = new Map<string, string>();
+  for (const s of snaps ?? []) if (!lastAttempt.has(s.company_id)) lastAttempt.set(s.company_id, s.created_at);
+  companies.sort((a, b) => (lastAttempt.get(a.id) ?? "").localeCompare(lastAttempt.get(b.id) ?? ""));
 
-  // Dispatch in batches to stay within Hyperbrowser concurrent session limits
-  for (let i = 0; i < companies.length; i += BATCH_SIZE) {
-    const batch = companies.slice(i, i + BATCH_SIZE);
-    await Promise.allSettled(
-      batch.map((company) =>
-        fetch(`${siteUrl}/api/ingest/${company.id}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
-        })
-      )
-    );
-    dispatched.push(...batch.map((c) => c.name));
-  }
+  const started = Date.now();
+  const results = await mapLimit(companies, CONCURRENCY, async (company) => {
+    if (Date.now() - started > START_BUDGET_MS) {
+      return { company: company.name, success: false, skipped: true, error: "Out of time; will run next cycle" };
+    }
+    const t0 = Date.now();
+    let result: IngestionResult;
+    try {
+      result = await runIngestion(company.id);
+    } catch (err) {
+      result = { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const summary = { company: company.name, ...result, seconds: Math.round((Date.now() - t0) / 1000) };
+    console.log(`[ingest] ${JSON.stringify(summary)}`);
+    return summary;
+  });
 
+  const ok = results.filter((r) => r.success).length;
   return NextResponse.json({
-    dispatched,
-    count: dispatched.length,
+    ok,
+    failed: results.length - ok,
+    seconds: Math.round((Date.now() - started) / 1000),
+    results,
   });
 }

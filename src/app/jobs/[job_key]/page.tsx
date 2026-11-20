@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  const description = job.description
+  const description = (job.description || `${job.title} at ${job.company_name}`)
     .replace(/[#*_`\[\]]/g, "")
     .slice(0, 155)
     .trim();
@@ -205,7 +205,13 @@ export default async function JobDetailPage({ params }: Props) {
 
       {/* Description */}
       <div className="mt-8 text-base">
-        <MarkdownRenderer content={job.description} />
+        {job.description ? (
+          <MarkdownRenderer content={job.description} />
+        ) : (
+          <p className="text-gray-500">
+            Full details are on {job.company_name}&apos;s careers site.
+          </p>
+        )}
       </div>
 
       {/* Bottom CTA */}

@@ -32,10 +32,14 @@ export async function publishSnapshot(
   try {
     // 2. Look up existing first_seen_at values for these job_keys
     const jobKeys = jobs.map((j) => j.job_key);
-    const { data: existingJobs } = await supabase
-      .from("jobs")
-      .select("job_key, first_seen_at")
-      .in("job_key", jobKeys);
+    const { data: existingJobs } =
+      jobKeys.length > 0
+        ? await supabase
+            .from("jobs")
+            .select("job_key, first_seen_at")
+            .eq("company_id", companyId)
+            .in("job_key", jobKeys)
+        : { data: [] };
 
     const firstSeenMap = new Map<string, string>();
     if (existingJobs) {
@@ -64,10 +68,12 @@ export async function publishSnapshot(
       first_seen_at: firstSeenMap.get(j.job_key) ?? now,
     }));
 
-    const { error: jobsError } = await supabase.from("jobs").insert(jobRows);
-
-    if (jobsError) {
-      throw new Error(`Failed to insert jobs: ${jobsError.message}`);
+    // An empty snapshot is valid: it means the company has no open roles right now.
+    if (jobRows.length > 0) {
+      const { error: jobsError } = await supabase.from("jobs").insert(jobRows);
+      if (jobsError) {
+        throw new Error(`Failed to insert jobs: ${jobsError.message}`);
+      }
     }
 
     // 4. Publish the snapshot
