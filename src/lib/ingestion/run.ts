@@ -100,7 +100,10 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
         .select("job_key, department_tag")
         .eq("company_id", companyId)
         .in("job_key", jobs.map((j) => j.job_key));
-      for (const row of existing ?? []) knownTags.set(row.job_key, row.department_tag as DepartmentTag);
+      // "Other" is often a past fallback (e.g. the API was down), so re-classify those.
+      for (const row of existing ?? []) {
+        if (row.department_tag !== "Other") knownTags.set(row.job_key, row.department_tag as DepartmentTag);
+      }
     }
     const unknown = jobs.filter((j) => !knownTags.has(j.job_key));
     const newTags = await classifyDepartments(unknown);

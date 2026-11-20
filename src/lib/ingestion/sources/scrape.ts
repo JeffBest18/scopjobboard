@@ -167,6 +167,12 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
       return true;
     });
 
+  // Several roles sharing one link (e.g. every "Apply" button -> /contact) means the
+  // link isn't a posting. Treat those roles as listed inline on the careers page.
+  const urlCounts = new Map<string, number>();
+  for (const c of candidates) urlCounts.set(c.url, (urlCounts.get(c.url) ?? 0) + 1);
+  for (const c of candidates) if ((urlCounts.get(c.url) ?? 0) > 1) c.url = careersPage;
+
   let detailBudget = MAX_DETAIL_PAGES;
   const jobs: SourceJob[] = await mapLimit(candidates, 4, async (c) => {
     let description = c.summary;
