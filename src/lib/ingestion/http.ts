@@ -95,7 +95,81 @@ export async function mapLimit<T, R>(
 /** Pulls the first dollar salary range out of free text, e.g. "$120,000 - $150,000". */
 export function findSalaryInText(text: string): string | null {
   const m = text.match(
-    /\$\s?\d[\d,.]*\s?[kK]?\s*(?:-|–|—|to)\s*\$?\s?\d[\d,.]*\s?[kK]?/
+    /\$\s?\d[\d,.]*\s?[kK]?\s*(?:-|–|—|to)\s*\$?\s?\d[\d,.]*\s?[kK]?(?:\s*(?:\/\s*h(?:ou)?r|per hour))?/i
   );
   return m ? m[0].replace(/\s+/g, " ") : null;
+}
+
+export interface LdJobPosting {
+  title: string | null;
+  description: string;
+  location: string | null;
+  department: string | null;
+  salary: string | null;
+}
+
+/**
+ * Reads schema.org JobPosting structured data (JSON-LD), which many careers
+ * sites embed for Google Jobs. Exact and free, so it's preferred over an LLM.
+ */
+export function extractJobPostingLd(html: string): LdJobPosting | null {
+  const blocks = html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const b of blocks) {
+    let data: unknown;
+    try {
+      data = JSON.parse(b[1].trim());
+    } catch {
+      continue;
+    }
+    const posting = findJobPosting(data);
+    if (!posting) continue;
+
+    const description = htmlToMarkdown(decodeEntities(String(posting.description ?? "")));
+    if (!description) continue;
+
+    const locs = ([] as unknown[]).concat(posting.jobLocation ?? []).map((l) => {
+      const a = (l as { address?: Record<string, string> })?.address ?? {};
+      return [a.addressLocality, a.addressRegion].filter(Boolean).join(", ");
+    });
+    const remote = String(posting.jobLocationType ?? "").toUpperCase() === "TELECOMMUTE";
+    const location = [...new Set(locs.filter(Boolean))].join(" · ") || (remote ? "Remote" : null);
+
+    let salary: string | null = null;
+    const base = posting.baseSalary as
+      | { currency?: string; value?: { minValue?: number; maxValue?: number; value?: number; unitText?: string } }
+      | undefined;
+    const v = base?.value;
+    if (v && (!base?.currency || base.currency === "USD")) {
+      const fmt = (n: number) => `$${n.toLocaleString("en-US")}`;
+      const unit = /hour/i.test(v.unitText ?? "") ? "/hr" : "";
+      if (v.minValue && v.maxValue) salary = `${fmt(v.minValue)} - ${fmt(v.maxValue)}${unit}`;
+      else if (v.value || v.minValue) salary = `${fmt((v.value ?? v.minValue)!)}${unit}`;
+    }
+
+    return {
+      title: typeof posting.title === "string" ? decodeEntities(posting.title) : null,
+      description,
+      location,
+      department: typeof posting.occupationalCategory === "string" ? posting.occupationalCategory : null,
+      salary,
+    };
+  }
+  return null;
+}
+
+function findJobPosting(node: unknown): Record<string, unknown> | null {
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const hit = findJobPosting(n);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>;
+    const type = obj["@type"];
+    if (type === "JobPosting" || (Array.isArray(type) && type.includes("JobPosting"))) return obj;
+    if (obj["@graph"]) return findJobPosting(obj["@graph"]);
+  }
+  return null;
 }

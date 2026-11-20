@@ -14,11 +14,14 @@ export function cleanSalary(raw: string | null): string | null {
   const rangeMatch = raw.match(
     /\$[\d,]+(?:\.\d+)?[Kk]?\s*[-–—to]+\s*\$[\d,]+(?:\.\d+)?[Kk]?/
   );
-  if (rangeMatch) return rangeMatch[0];
+  // Keep the unit for hourly pay, otherwise "$24 - $28" reads like a typo.
+  const hourly = /\/\s*h(ou)?r|per hour|hourly/i.test(raw) ? "/hr" : "";
+
+  if (rangeMatch) return rangeMatch[0].trim() + hourly;
 
   // Match single salary: $XXX,XXX or $XXXK
   const singleMatch = raw.match(/\$[\d,]+(?:\.\d+)?[Kk]?/);
-  if (singleMatch) return singleMatch[0];
+  if (singleMatch) return singleMatch[0] + hourly;
 
   // No recognizable salary pattern
   return null;

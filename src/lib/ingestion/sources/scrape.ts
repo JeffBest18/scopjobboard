@@ -6,7 +6,7 @@
  * the page text or its link appears in the page HTML.
  */
 import Hyperbrowser from "@hyperbrowser/sdk";
-import { fetchText, findSalaryInText, htmlToMarkdown, mapLimit } from "../http";
+import { extractJobPostingLd, fetchText, findSalaryInText, htmlToMarkdown, mapLimit } from "../http";
 import { extractJson } from "../llm";
 import type { SourceJob, SourceResult } from "./types";
 
@@ -143,8 +143,15 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
 
     if (c.url !== careersPage && detailBudget-- > 0) {
       try {
-        const detailMd = htmlToMarkdown(await fetchText(c.url)).slice(0, MAX_PAGE_CHARS);
-        if (detailMd.length > 200) {
+        const detailHtml = await fetchText(c.url);
+        const ld = extractJobPostingLd(detailHtml);
+        const detailMd = ld ? "" : htmlToMarkdown(detailHtml).slice(0, MAX_PAGE_CHARS);
+        if (ld) {
+          if (ld.description.length > description.length) description = ld.description;
+          location ??= ld.location;
+          department ??= ld.department;
+          salary ??= ld.salary;
+        } else if (detailMd.length > 200) {
           const d = await extractJson<{ description: string; location: string; department: string; salary: string }>({
             system: DETAIL_SYSTEM,
             user: `Job title: ${c.title}\nURL: ${c.url}\n\n<page>\n${detailMd}\n</page>`,

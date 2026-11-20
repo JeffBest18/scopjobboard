@@ -41,7 +41,7 @@ npm run lint         # ESLint
 Runs **daily** via Vercel Cron (`vercel.json`, 13:00 UTC). `/api/ingest` ingests every enabled company with a careers URL **in-process** (concurrency 5, stalest first, stops starting new companies after 200s). It used to fan out HTTP calls to itself and timed out after the first couple of batches; don't reintroduce that.
 
 Per company (`run.ts` → `sources/index.ts#collectJobs`), most reliable source first:
-1. **ATS API** (`sources/ats.ts`): careers URL *is* an ATS board, or the careers page HTML embeds/links one. Supported: Ashby, Greenhouse, Lever, Rippling, BambooHR, Teamtailor, Workable, Recruitee, SmartRecruiters. One or two JSON requests, complete and exact. Most portfolio companies land here.
+1. **ATS API** (`sources/ats.ts`): careers URL *is* an ATS board, or the careers page HTML embeds/links one. Supported: Ashby, Greenhouse, Lever, Rippling, BambooHR, Teamtailor, Workable, Recruitee, SmartRecruiters, JazzHR (applytojob; duplicate per-channel postings are collapsed). Posting pages with schema.org JobPosting JSON-LD are read directly, without the LLM. One or two JSON requests, complete and exact. Most portfolio companies land here.
 2. **Browser render** (Hyperbrowser, only if `HYPERBROWSER_API_KEY` is set): when plain fetch fails (403) or the page is JS-rendered; then re-check for an ATS.
 3. **Claude scrape** (`sources/scrape.ts`): Claude (Haiku, structured outputs) lists jobs from the page, then reads each posting page for its description. Jobs whose title/link doesn't appear on the page are dropped (hallucination guard).
 
@@ -52,6 +52,8 @@ Snapshot rules:
 - Scrape result with 0 jobs, or <30% of the previous count (when previous ≥5), is saved as `failed` and the previous snapshot stays live.
 - Failed snapshot `error_message` is prefixed with the method, e.g. `[scrape] ...`, `[ashby:rogo] ...`; shown in /admin.
 - Companies with no `careers_url` are skipped (their jobs are managed by hand in /admin).
+- `company-fixes.ts` applies careers-URL corrections at the start of each run, only where the old value is unchanged.
+- Department tags: keyword guess first (`guessDepartment`), overwritten by Claude when the API works.
 
 Manual run: `curl -H "Authorization: Bearer $CRON_SECRET" "https://jobs.scopvc.com/api/ingest?company=<slug>"` (omit `company` for all). Admin "Re-run" button calls `runIngestion` directly.
 

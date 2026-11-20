@@ -7,6 +7,7 @@
  */
 import {
   decodeEntities,
+  extractJobPostingLd,
   fetchJson,
   fetchText,
   findSalaryInText,
@@ -24,7 +25,8 @@ export type AtsProvider =
   | "teamtailor"
   | "workable"
   | "recruitee"
-  | "smartrecruiters";
+  | "smartrecruiters"
+  | "jazzhr";
 
 export interface AtsRef {
   provider: AtsProvider;
@@ -47,6 +49,7 @@ const PATTERNS: { provider: AtsProvider; re: RegExp }[] = [
   { provider: "workable", re: /apply\.workable\.com\/([A-Za-z0-9_-]+)/i },
   { provider: "recruitee", re: /\/\/([a-z0-9-]+)\.recruitee\.com/i },
   { provider: "smartrecruiters", re: /(?:jobs|careers)\.smartrecruiters\.com\/([A-Za-z0-9_-]+)/i },
+  { provider: "jazzhr", re: /\/\/([a-z0-9-]+)\.applytojob\.com/i },
 ];
 
 /**
@@ -97,6 +100,8 @@ export async function fetchAtsJobs(ref: AtsRef): Promise<SourceJob[]> {
       return recruitee(ref.token);
     case "smartrecruiters":
       return smartrecruiters(ref.token);
+    case "jazzhr":
+      return jazzhr(ref.token);
   }
 }
 
@@ -423,6 +428,60 @@ async function smartrecruiters(token: string): Promise<SourceJob[]> {
       url: `https://jobs.smartrecruiters.com/${token}/${row.id}`,
       location: place || (row.location?.remote ? "Remote" : null),
       department_raw: row.department?.label || null,
+      description,
+    });
+  });
+}
+
+// -------------------------------------------------------------------- JazzHR
+
+/**
+ * Recruiters often post the same role once per sourcing channel
+ * ("... - Facebook", "... Handshake", "... Referral Link"). Strip those
+ * suffixes so each real role shows up once.
+ */
+const CHANNEL_SUFFIX =
+  /\s*[-–:]?\s*(facebook|hand ?shake|zip ?recruiter|referral(?: link)?|(?:community )?outreach|college central|college of marin|career ?link|csu long beach|indeed|linkedin|craigslist)\s*$/i;
+
+async function jazzhr(token: string): Promise<SourceJob[]> {
+  const base = `https://${token}.applytojob.com/apply`;
+  const html = await fetchText(base);
+  const rowRe =
+    /<a href="(https:\/\/[a-z0-9-]+\.applytojob\.com\/apply\/[A-Za-z0-9]+\/[^"]*)">\s*([^<]+?)\s*<\/a>\s*<\/h3>\s*<ul[^>]*>([\s\S]*?)<\/ul>/g;
+
+  const unique = new Map<string, { url: string; title: string; location: string | null; department: string | null }>();
+  for (const m of html.matchAll(rowRe)) {
+    const title = decodeEntities(m[2]).replace(CHANNEL_SUFFIX, "").trim();
+    const attrs = m[3];
+    const location = attrs.match(/fa-map-marker[^>]*><\/i>\s*([^<]+)/)?.[1]?.trim() || null;
+    const department = attrs.match(/fa-sitemap[^>]*><\/i>\s*([^<]+)/)?.[1]?.trim() || null;
+    const key = `${title.toLowerCase()}|${(location ?? "").toLowerCase()}`;
+    if (!unique.has(key)) unique.set(key, { url: m[1], title, location, department });
+  }
+
+  return mapLimit([...unique.values()], 6, async (row) => {
+    let description = "";
+    let salary: string | null = null;
+    try {
+      const page = await fetchText(row.url);
+      const ld = extractJobPostingLd(page);
+      if (ld) {
+        description = ld.description;
+        salary = ld.salary;
+      } else {
+        // Some postings omit JSON-LD; the description is in #job-description.
+        const body = page.match(/id="job-description"[^>]*>([\s\S]*?)<div class="resumator-mobile-apply-wrapper/);
+        if (body) description = htmlToMarkdown(body[1]);
+      }
+    } catch {
+      // Keep the listing even if the detail call fails.
+    }
+    return job({
+      title: row.title,
+      url: row.url,
+      location: row.location,
+      department_raw: row.department,
+      salary_raw: salary ?? findSalaryInText(description),
       description,
     });
   });

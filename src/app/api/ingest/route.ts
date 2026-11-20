@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runIngestion, type IngestionResult } from "@/lib/ingestion/run";
 import { mapLimit } from "@/lib/ingestion/http";
+import { applyCompanyFixes } from "@/lib/ingestion/company-fixes";
 
 export const maxDuration = 300;
 
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
 
   const supabase = createAdminClient();
   const onlySlug = request.nextUrl.searchParams.get("company");
+  const fixesApplied = await applyCompanyFixes(supabase);
+  if (fixesApplied.length) console.log(`[ingest] careers URL fixes applied: ${fixesApplied.join(", ")}`);
 
   let query = supabase
     .from("companies")
@@ -65,7 +68,9 @@ export async function GET(request: NextRequest) {
   });
 
   const ok = results.filter((r) => r.success).length;
+  console.log(`[ingest] done: ${ok}/${results.length} ok in ${Math.round((Date.now() - started) / 1000)}s`);
   return NextResponse.json({
+    fixesApplied,
     ok,
     failed: results.length - ok,
     seconds: Math.round((Date.now() - started) / 1000),
