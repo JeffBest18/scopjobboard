@@ -106,6 +106,7 @@ export interface LdJobPosting {
   location: string | null;
   department: string | null;
   salary: string | null;
+  posted_at: string | null;
 }
 
 /**
@@ -152,6 +153,10 @@ export function extractJobPostingLd(html: string): LdJobPosting | null {
       location,
       department: typeof posting.occupationalCategory === "string" ? posting.occupationalCategory : null,
       salary,
+      posted_at: (() => {
+        const d = new Date(String(posting.datePosted ?? ""));
+        return posting.datePosted && !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+      })(),
     };
   }
   return null;

@@ -7,6 +7,8 @@ export interface SourceJob {
   salary_raw: string | null;
   /** Markdown. May be empty when the source exposes no description. */
   description: string;
+  /** When the posting went up (ISO 8601), if the source says. Used to drop very old postings. */
+  posted_at?: string | null;
 }
 
 export interface SourceResult {

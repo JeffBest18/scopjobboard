@@ -105,6 +105,12 @@ export async function fetchAtsJobs(ref: AtsRef): Promise<SourceJob[]> {
   }
 }
 
+function iso(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 function job(partial: Omit<SourceJob, "salary_raw"> & { salary_raw?: string | null }): SourceJob {
   return {
     ...partial,
@@ -123,6 +129,7 @@ async function greenhouse(token: string): Promise<SourceJob[]> {
       location?: { name?: string };
       departments?: { name: string }[];
       content?: string;
+      first_published?: string;
     }[];
   }>(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`);
 
@@ -133,6 +140,7 @@ async function greenhouse(token: string): Promise<SourceJob[]> {
       location: j.location?.name || null,
       department_raw: j.departments?.[0]?.name || null,
       description: htmlToMarkdown(j.content),
+      posted_at: iso(j.first_published),
     })
   );
 }
@@ -151,6 +159,7 @@ async function ashby(token: string): Promise<SourceJob[]> {
       isListed?: boolean;
       isRemote?: boolean;
       descriptionHtml?: string;
+      publishedAt?: string;
       shouldDisplayCompensationOnJobPostings?: boolean;
       compensation?: { compensationTierSummary?: string; scrapeableCompensationSalarySummary?: string };
     }[];
@@ -171,6 +180,7 @@ async function ashby(token: string): Promise<SourceJob[]> {
         department_raw: j.department || j.team || null,
         salary_raw: comp || findSalaryInText(description),
         description,
+        posted_at: iso(j.publishedAt),
       });
     });
 }
@@ -188,6 +198,7 @@ async function lever(token: string): Promise<SourceJob[]> {
       lists?: { text: string; content: string }[];
       additional?: string;
       salaryRange?: { min?: number; max?: number; currency?: string };
+      createdAt?: number;
     }[]
   >(`${host}/v0/postings/${encodeURIComponent(token)}?mode=json`);
 
@@ -210,6 +221,7 @@ async function lever(token: string): Promise<SourceJob[]> {
       department_raw: j.categories?.department || j.categories?.team || null,
       salary_raw: salary ?? findSalaryInText(description),
       description,
+      posted_at: iso(j.createdAt),
     });
   });
 }
@@ -233,13 +245,16 @@ async function rippling(token: string): Promise<SourceJob[]> {
   return mapLimit([...byId.values()], 5, async ({ row, locations }) => {
     let description = "";
     let salary: string | null = null;
+    let postedAt: string | null = null;
     try {
       const detail = await fetchJson<{
+        createdOn?: string;
         description?: { company?: string; role?: string };
         payRangeDetails?: { rangeStart?: number; rangeEnd?: number; currency?: string }[];
       }>(`${base}/${row.uuid}`);
       // Role first: the company blurb is identical on every posting.
       description = htmlToMarkdown([detail.description?.role, detail.description?.company].filter(Boolean).join("\n"));
+      postedAt = iso(detail.createdOn);
       const pay = detail.payRangeDetails?.[0];
       if (pay?.rangeStart && pay?.rangeEnd) {
         salary = `$${pay.rangeStart.toLocaleString("en-US")} - $${pay.rangeEnd.toLocaleString("en-US")}`;
@@ -254,6 +269,7 @@ async function rippling(token: string): Promise<SourceJob[]> {
       department_raw: row.department?.label || null,
       salary_raw: salary ?? findSalaryInText(description),
       description,
+      posted_at: postedAt,
     });
   });
 }
@@ -276,12 +292,14 @@ async function bamboohr(token: string): Promise<SourceJob[]> {
   return mapLimit(list.result, 5, async (row) => {
     let description = "";
     let salary: string | null = null;
+    let postedAt: string | null = null;
     try {
-      const detail = await fetchJson<{ result: { jobOpening: { description?: string; compensation?: string } } }>(
-        `${base}/${row.id}/detail`
-      );
+      const detail = await fetchJson<{
+        result: { jobOpening: { description?: string; compensation?: string; datePosted?: string } };
+      }>(`${base}/${row.id}/detail`);
       description = htmlToMarkdown(detail.result.jobOpening.description);
       salary = detail.result.jobOpening.compensation || null;
+      postedAt = iso(detail.result.jobOpening.datePosted);
     } catch {
       // Keep the listing even if the detail call fails.
     }
@@ -294,6 +312,7 @@ async function bamboohr(token: string): Promise<SourceJob[]> {
       department_raw: row.departmentLabel || null,
       salary_raw: salary ?? findSalaryInText(description),
       description,
+      posted_at: postedAt,
     });
   });
 }
@@ -319,6 +338,7 @@ async function teamtailor(origin: string): Promise<SourceJob[]> {
       location: [city, country].filter(Boolean).join(", ") || (tag(it, "remoteStatus") === "fully" ? "Remote" : null),
       department_raw: tag(it, "tt:department"),
       description,
+      posted_at: iso(tag(it, "pubDate")),
     });
   });
 }
@@ -334,6 +354,7 @@ async function workable(token: string): Promise<SourceJob[]> {
       department?: string[];
       location?: { city?: string; region?: string; country?: string };
       remote?: boolean;
+      published?: string;
     }[];
   }>(`${base}/v3/accounts/${encodeURIComponent(token)}/jobs`, {
     method: "POST",
@@ -362,6 +383,7 @@ async function workable(token: string): Promise<SourceJob[]> {
       location: place || (row.remote ? "Remote" : null),
       department_raw: row.department?.[0] || null,
       description,
+      posted_at: iso(row.published),
     });
   });
 }
@@ -378,6 +400,7 @@ async function recruitee(token: string): Promise<SourceJob[]> {
       description?: string;
       requirements?: string;
       remote?: boolean;
+      published_at?: string;
     }[];
   }>(`https://${token}.recruitee.com/api/offers/`);
 
@@ -388,6 +411,7 @@ async function recruitee(token: string): Promise<SourceJob[]> {
       location: o.location || (o.remote ? "Remote" : null),
       department_raw: o.department || null,
       description: htmlToMarkdown([o.description, o.requirements].filter(Boolean).join("\n")),
+      posted_at: iso(o.published_at),
     })
   );
 }
@@ -402,6 +426,7 @@ async function smartrecruiters(token: string): Promise<SourceJob[]> {
       name: string;
       location?: { city?: string; region?: string; country?: string; remote?: boolean };
       department?: { label?: string };
+      releasedDate?: string;
     }[];
   }>(`${base}?limit=100`);
 
@@ -429,6 +454,7 @@ async function smartrecruiters(token: string): Promise<SourceJob[]> {
       location: place || (row.location?.remote ? "Remote" : null),
       department_raw: row.department?.label || null,
       description,
+      posted_at: iso(row.releasedDate),
     });
   });
 }
@@ -462,12 +488,14 @@ async function jazzhr(token: string): Promise<SourceJob[]> {
   return mapLimit([...unique.values()], 6, async (row) => {
     let description = "";
     let salary: string | null = null;
+    let postedAt: string | null = null;
     try {
       const page = await fetchText(row.url);
       const ld = extractJobPostingLd(page);
       if (ld) {
         description = ld.description;
         salary = ld.salary;
+        postedAt = ld.posted_at;
       } else {
         // Some postings omit JSON-LD; the description is in #job-description.
         const body = page.match(/id="job-description"[^>]*>([\s\S]*?)<div class="resumator-mobile-apply-wrapper/);
@@ -483,6 +511,7 @@ async function jazzhr(token: string): Promise<SourceJob[]> {
       department_raw: row.department,
       salary_raw: salary ?? findSalaryInText(description),
       description,
+      posted_at: postedAt,
     });
   });
 }

@@ -47,6 +47,8 @@ Per company (`run.ts` → `sources/index.ts#collectJobs`), most reliable source 
 
 Then: batched department classification (`classify-department.ts`, tags reused for known job_keys) → `publishSnapshot`.
 
+Stale postings (`staleness.ts`) are dropped at ingestion even if the source still lists them: general/open applications, postings older than `MAX_POSTING_AGE_DAYS` (default 180; dates come from the ATS or JSON-LD `datePosted`), and titles naming a school year that has ended (e.g. "Tutor '25/'26"). Backstop at read time (`lib/freshness.ts`): auto-ingested companies whose jobs haven't been confirmed by a successful run in 30 days are hidden from the board, job pages, `/r` and the sitemap.
+
 Snapshot rules:
 - ATS result (or a page explicitly saying "no open roles") is **authoritative**: 0 jobs publishes an empty snapshot, clearing the company's listings.
 - Scrape result with 0 jobs, or <30% of the previous count (when previous ≥5), is saved as `failed` and the previous snapshot stays live.

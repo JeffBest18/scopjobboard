@@ -179,6 +179,7 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
     let location = orNull(c.location);
     let department = orNull(c.department);
     let salary = orNull(c.salary);
+    let postedAt: string | null = null;
 
     if (c.url !== careersPage && detailBudget-- > 0) {
       try {
@@ -190,6 +191,7 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
           location ??= ld.location;
           department ??= ld.department;
           salary ??= ld.salary;
+          postedAt = ld.posted_at;
         } else if (detailMd.length > 200) {
           const d = await extractJson<{ description: string; location: string; department: string; salary: string }>({
             system: DETAIL_SYSTEM,
@@ -213,6 +215,7 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
       department_raw: department,
       salary_raw: salary ?? findSalaryInText(description),
       description,
+      posted_at: postedAt,
     };
   });
 

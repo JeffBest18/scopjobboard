@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import type { LiveJob } from "@/lib/types";
 import { formatSalary } from "@/lib/ingestion/clean-salary";
+import { getFreshnessCheck } from "@/lib/freshness";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface Props {
@@ -22,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     .limit(1)
     .single();
 
-  if (!job) {
+  if (!job || !(await getFreshnessCheck(supabase)).isCurrent(job)) {
     return { title: "Job Not Found" };
   }
 
@@ -63,7 +64,7 @@ export default async function JobDetailPage({ params }: Props) {
     .limit(1)
     .single();
 
-  if (!data) {
+  if (!data || !(await getFreshnessCheck(supabase)).isCurrent(data)) {
     notFound();
   }
 

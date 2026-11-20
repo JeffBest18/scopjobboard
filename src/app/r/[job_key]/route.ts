@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getFreshnessCheck } from "@/lib/freshness";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
@@ -11,12 +12,12 @@ export async function GET(
   // Look up job from live_jobs
   const { data: job } = await supabase
     .from("live_jobs")
-    .select("job_url, company_id")
+    .select("job_url, company_id, created_at")
     .eq("job_key", job_key)
     .limit(1)
     .single();
 
-  if (!job) {
+  if (!job || !(await getFreshnessCheck(supabase)).isCurrent(job)) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 

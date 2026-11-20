@@ -5,10 +5,13 @@ import { classifyDepartments } from "./classify-department";
 import { cleanSalary } from "./clean-salary";
 import { publishSnapshot, failSnapshot, type ProcessedJob } from "./publish";
 import { collectJobs } from "./sources";
+import { staleReason } from "./staleness";
 
 export interface IngestionResult {
   success: boolean;
   jobCount?: number;
+  /** Postings the source still lists but that were dropped as stale. */
+  staleCount?: number;
   method?: string;
   error?: string;
 }
@@ -65,9 +68,21 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
       }
     }
 
+    // Drop very old postings, past-school-year postings, and general applications.
+    // (Checked after the guards above, which are about whether the source worked.)
+    const stale: string[] = [];
+    const freshJobs = source.jobs.filter((job) => {
+      const reason = staleReason(job);
+      if (reason) stale.push(`${job.title} (${reason})`);
+      return !reason;
+    });
+    if (stale.length) {
+      console.log(`[ingest] ${company.name}: dropped ${stale.length} stale: ${stale.join("; ").slice(0, 1500)}`);
+    }
+
     const canonicalCareersUrl = canonicalizeUrl(company.careers_url);
     const byKey = new Map<string, Omit<ProcessedJob, "department_tag">>();
-    for (const job of source.jobs) {
+    for (const job of freshJobs) {
       if (!job.title) continue;
       let url: string;
       try {
@@ -115,7 +130,7 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
     }));
 
     await publishSnapshot(companyId, processed);
-    return { success: true, jobCount: processed.length, method };
+    return { success: true, jobCount: processed.length, staleCount: stale.length, method };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     await failSnapshot(companyId, `[${method}] ${message}`);
