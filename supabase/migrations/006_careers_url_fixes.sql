@@ -6,6 +6,7 @@
 UPDATE companies SET careers_url = 'https://www.artiphishell.com/careers/'      WHERE slug = 'artiphishell' AND careers_url IS NULL;
 UPDATE companies SET careers_url = 'https://www.spacture.ai/careers'            WHERE slug = 'spacture'     AND careers_url IS NULL;
 UPDATE companies SET careers_url = 'https://heytutor.applytojob.com/apply'      WHERE slug = 'heytutor'     AND careers_url IS NULL;
-UPDATE companies SET careers_url = 'https://www.indeed.com/cmp/Healtharc/jobs'  WHERE slug = 'healtharc'    AND careers_url IS NULL;
-UPDATE companies SET careers_url = 'https://www.trylifeguard.com/careers'       WHERE slug = 'lifeguard'    AND careers_url IS NULL;
+-- HealthArc (Indeed, login-walled) and Lifeguard (no careers page) were set briefly, then reverted:
+UPDATE companies SET careers_url = NULL WHERE slug = 'healtharc' AND careers_url = 'https://www.indeed.com/cmp/Healtharc/jobs';
+UPDATE companies SET careers_url = NULL WHERE slug = 'lifeguard' AND careers_url = 'https://www.trylifeguard.com/careers';
 UPDATE companies SET careers_url = 'https://careers.smartbarrel.io/jobs'        WHERE slug = 'smartbarrel'  AND careers_url = 'https://smartbarrel.io/careers/#jobslisting';

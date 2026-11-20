@@ -6,13 +6,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * `from` value, so anything later edited in /admin is never overwritten.
  * Also recorded in supabase/migrations/006_careers_url_fixes.sql.
  */
-const FIXES: { slug: string; from: string | null; to: string }[] = [
+const FIXES: { slug: string; from: string | null; to: string | null }[] = [
   // Had no careers URL; these companies post openings here:
   { slug: "artiphishell", from: null, to: "https://www.artiphishell.com/careers/" },
   { slug: "spacture", from: null, to: "https://www.spacture.ai/careers" },
   { slug: "heytutor", from: null, to: "https://heytutor.applytojob.com/apply" },
-  { slug: "healtharc", from: null, to: "https://www.indeed.com/cmp/Healtharc/jobs" },
-  { slug: "lifeguard", from: null, to: "https://www.trylifeguard.com/careers" },
+  // Set on 2026-11-19 and reverted: Indeed requires a login to view
+  // HealthArc's jobs, and trylifeguard.com/careers is not a careers page.
+  { slug: "healtharc", from: "https://www.indeed.com/cmp/Healtharc/jobs", to: null },
+  { slug: "lifeguard", from: "https://www.trylifeguard.com/careers", to: null },
   // The listing on smartbarrel.io is injected by a script from this site:
   {
     slug: "smartbarrel",

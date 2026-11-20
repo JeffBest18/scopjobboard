@@ -42,7 +42,7 @@ Runs **daily** via Vercel Cron (`vercel.json`, 13:00 UTC). `/api/ingest` ingests
 
 Per company (`run.ts` → `sources/index.ts#collectJobs`), most reliable source first:
 1. **ATS API** (`sources/ats.ts`): careers URL *is* an ATS board, or the careers page HTML embeds/links one. Supported: Ashby, Greenhouse, Lever, Rippling, BambooHR, Teamtailor, Workable, Recruitee, SmartRecruiters, JazzHR (applytojob; duplicate per-channel postings are collapsed). Posting pages with schema.org JobPosting JSON-LD are read directly, without the LLM. One or two JSON requests, complete and exact. Most portfolio companies land here.
-2. **Browser render** (Hyperbrowser, only if `HYPERBROWSER_API_KEY` is set): when plain fetch fails (403) or the page is JS-rendered; then re-check for an ATS.
+2. **Browser render** (Firecrawl if `FIRECRAWL_API_KEY` is set, else Hyperbrowser if `HYPERBROWSER_API_KEY` is set): when plain fetch fails (403) or the page is JS-rendered; then re-check for an ATS.
 3. **Claude scrape** (`sources/scrape.ts`): Claude (Haiku, structured outputs) lists jobs from the page, then reads each posting page for its description. Jobs whose title/link doesn't appear on the page are dropped (hallucination guard).
 
 Then: batched department classification (`classify-department.ts`, tags reused for known job_keys) → `publishSnapshot`.
@@ -75,7 +75,7 @@ See `.env.example`. Required:
 - `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`
 - `CRON_SECRET` (authenticates ingestion endpoints)
 - `ANTHROPIC_API_KEY` (prepaid; if the balance hits zero, scraped companies fail and new jobs get tagged "Other")
-- `HYPERBROWSER_API_KEY` (optional; only for pages that block plain fetch or need JS)
+- `FIRECRAWL_API_KEY` (optional, preferred) or `HYPERBROWSER_API_KEY`: only for pages that block plain fetch or need JS
 - `NEXT_PUBLIC_SITE_URL`
 
 ## Implementation Phases

@@ -16,19 +16,52 @@ const MAX_DETAIL_PAGES = 40;
 /** Pages whose readable text is shorter than this are assumed to need JS rendering. */
 export const THIN_PAGE_CHARS = 600;
 
+/**
+ * Renders a page in a real browser, for sites that block plain requests (403,
+ * old TLS) or only show content after JavaScript runs. Uses Firecrawl when
+ * FIRECRAWL_API_KEY is set, otherwise Hyperbrowser; returns null if neither works.
+ */
 export async function renderWithBrowser(url: string): Promise<string | null> {
-  if (!process.env.HYPERBROWSER_API_KEY) return null;
-  try {
-    const client = new Hyperbrowser({ apiKey: process.env.HYPERBROWSER_API_KEY });
-    const result = await client.scrape.startAndWait({
-      url,
-      scrapeOptions: { formats: ["html"], onlyMainContent: false, waitFor: 2500 },
-    });
-    return result.status === "completed" ? (result.data?.html ?? null) : null;
-  } catch (err) {
-    console.warn(`[ingest] browser render failed for ${url}:`, err);
-    return null;
+  if (process.env.FIRECRAWL_API_KEY) {
+    try {
+      const res = await fetch("https://api.firecrawl.dev/v2/scrape", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url,
+          formats: ["rawHtml"],
+          onlyMainContent: false,
+          waitFor: 2500,
+          proxy: "auto", // retries with stealth proxies only if the basic fetch is blocked
+          timeout: 60_000,
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      const body = (await res.json()) as { success?: boolean; error?: string; data?: { rawHtml?: string } };
+      if (res.ok && body.success && body.data?.rawHtml) return body.data.rawHtml;
+      console.warn(`[ingest] firecrawl render failed for ${url}: HTTP ${res.status} ${body.error ?? ""}`);
+    } catch (err) {
+      console.warn(`[ingest] firecrawl render failed for ${url}:`, err instanceof Error ? err.message : err);
+    }
   }
+
+  if (process.env.HYPERBROWSER_API_KEY) {
+    try {
+      const client = new Hyperbrowser({ apiKey: process.env.HYPERBROWSER_API_KEY });
+      const result = await client.scrape.startAndWait({
+        url,
+        scrapeOptions: { formats: ["html"], onlyMainContent: false, waitFor: 2500 },
+      });
+      if (result.status === "completed" && result.data?.html) return result.data.html;
+      console.warn(`[ingest] hyperbrowser render failed for ${url}: ${result.status} ${result.error ?? ""}`);
+    } catch (err) {
+      console.warn(`[ingest] hyperbrowser render failed for ${url}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return null;
 }
 
 export function readableLength(html: string): number {
