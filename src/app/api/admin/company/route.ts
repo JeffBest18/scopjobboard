@@ -19,10 +19,26 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Invalid companyId" }, { status: 400 });
   }
 
+  if (enabled !== undefined && typeof enabled !== "boolean") {
+    return NextResponse.json({ error: "enabled must be true or false" }, { status: 400 });
+  }
+  if (careers_url !== undefined && careers_url !== null && careers_url !== "") {
+    let ok = false;
+    try {
+      ok = ["http:", "https:"].includes(new URL(String(careers_url)).protocol);
+    } catch {}
+    if (!ok) {
+      return NextResponse.json({ error: "Careers URL must start with http:// or https://" }, { status: 400 });
+    }
+  }
+
   const admin = createAdminClient();
   const updates: Record<string, unknown> = {};
   if (careers_url !== undefined) updates.careers_url = careers_url || null;
   if (enabled !== undefined) updates.enabled = enabled;
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
 
   const { data, error } = await admin
     .from("companies")

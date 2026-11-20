@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CompanyJobs } from "./company-jobs";
+import { VisibilityControl } from "../../company-controls";
 import type { Job, Snapshot } from "@/lib/types";
 
 export default async function CompanyJobsPage({
@@ -14,7 +15,7 @@ export default async function CompanyJobsPage({
 
   const { data: company } = await admin
     .from("companies")
-    .select("id, name, careers_url")
+    .select("id, name, careers_url, enabled")
     .eq("id", companyId)
     .single();
 
@@ -76,6 +77,10 @@ export default async function CompanyJobsPage({
             Careers page &rarr;
           </a>
         )}
+      </div>
+
+      <div className="mb-8">
+        <VisibilityControl companyId={company.id} name={company.name} enabled={company.enabled} />
       </div>
 
       <CompanyJobs companyId={companyId} jobs={jobs} />
