@@ -58,7 +58,7 @@ Snapshot rules:
 Manual run: `curl -H "Authorization: Bearer $CRON_SECRET" "https://jobs.scopvc.com/api/ingest?company=<slug>"` (omit `company` for all). Admin "Re-run" button calls `runIngestion` directly.
 
 ### Route Structure
-- `/jobs` — SSR directory listing with server-side pagination (25/page) and filters (department, company via URL params)
+- `/` and `/jobs` — the job board (`components/job-board.tsx`): company directory tiles, department chips with faceted counts, sticky search, results grouped by company (3 per company + "View all") or a flat newest-first list (`?view=all`, 25/page)
 - `/jobs/[job_key]` — SSR job detail page with SEO metadata
 - `/r/[job_key]` — Click redirect: logs to `clicks` table, 302 to stored job URL (never accepts URL param)
 - `/admin` — Auth-gated dashboard (Supabase Auth `getUser()`, not `getSession()`)
@@ -86,7 +86,7 @@ The project follows 6 sequential phases defined in `IMPLEMENTATION_PHASES.md`. P
 
 - **Auth**: Admin routes use `supabase.auth.getUser()` (server-validated), never `getSession()` (JWT-only)
 - **Ingestion auth**: Bearer token via `CRON_SECRET`, checked in `Authorization` header
-- **Filters**: URL search params (`?department=X&company=Y&page=N`), not client-side state — preserves SSR
+- **Board data/filters**: the server loads every live job once without descriptions (`lib/board-data.ts`) and the client filters in memory. State lives in the URL (`lib/board-params.ts`: `q`, `company`, `department`, `view`, `page`); company navigation uses pushState so Back returns to the overview
 - **Logos**: Static files at `/public/logos/{company_slug}.png`, updated via code changes
 - **URL canonicalization**: Strip tracking params (utm_*, fbclid, gclid, mc_cid, mc_eid), remove trailing slashes, lowercase hostname; preserve all other query params
 - **Department tagging**: one batched Claude call per 60 jobs; previously-seen job_keys keep their tag; failures fall back to "Other"

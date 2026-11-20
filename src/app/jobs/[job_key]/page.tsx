@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import type { LiveJob } from "@/lib/types";
+import { formatSalary } from "@/lib/ingestion/clean-salary";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface Props {
@@ -197,7 +198,7 @@ export default async function JobDetailPage({ params }: Props) {
                 <line x1="12" y1="1" x2="12" y2="23" />
                 <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
               </svg>
-              {job.salary_raw}
+              {formatSalary(job.salary_raw)}
             </span>
           )}
         </div>

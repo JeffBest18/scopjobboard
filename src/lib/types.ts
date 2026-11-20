@@ -38,6 +38,26 @@ export interface LiveJob extends Job {
   company_slug: string;
 }
 
+/** The fields the job board list needs (no description). */
+export type BoardJob = Pick<
+  LiveJob,
+  | "id"
+  | "job_key"
+  | "title"
+  | "company_name"
+  | "company_slug"
+  | "department_tag"
+  | "location"
+  | "salary_raw"
+  | "first_seen_at"
+>;
+
+export interface BoardCompany {
+  slug: string;
+  name: string;
+  homepage_url: string | null;
+}
+
 export interface Click {
   id: string;
   job_key: string;

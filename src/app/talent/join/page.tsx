@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import { DEPARTMENT_TAGS } from "@/lib/constants";
 
 const TOTAL_STEPS = 4;
@@ -105,12 +106,12 @@ export default function TalentJoinPage() {
         <p className="mt-3 text-gray-500">
           Thanks for joining! We&apos;ll reach out when roles match your interests.
         </p>
-        <a
+        <Link
           href="/"
           className="mt-8 text-sm text-gray-400 transition-colors duration-150 hover:text-black"
         >
           &larr; Back to job board
-        </a>
+        </Link>
       </div>
     );
   }
