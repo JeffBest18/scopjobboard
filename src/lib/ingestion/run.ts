@@ -4,7 +4,8 @@ import { canonicalizeUrl, generateJobKey, generateInlineJobKey } from "./canonic
 import { classifyDepartments } from "./classify-department";
 import { cleanSalary } from "./clean-salary";
 import { publishSnapshot, failSnapshot, type ProcessedJob } from "./publish";
-import { collectJobs } from "./sources";
+import { collectJobs, type SourceJob } from "./sources";
+import { resolveListingDate } from "../listing-date";
 import { staleReason } from "./staleness";
 
 export interface IngestionResult {
@@ -68,21 +69,10 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
       }
     }
 
-    // Drop very old postings, past-school-year postings, and general applications.
-    // (Checked after the guards above, which are about whether the source worked.)
-    const stale: string[] = [];
-    const freshJobs = source.jobs.filter((job) => {
-      const reason = staleReason(job);
-      if (reason) stale.push(`${job.title} (${reason})`);
-      return !reason;
-    });
-    if (stale.length) {
-      console.log(`[ingest] ${company.name}: dropped ${stale.length} stale: ${stale.join("; ").slice(0, 1500)}`);
-    }
-
+    // Key and de-duplicate what the source returned.
     const canonicalCareersUrl = canonicalizeUrl(company.careers_url);
-    const byKey = new Map<string, Omit<ProcessedJob, "department_tag">>();
-    for (const job of freshJobs) {
+    const byKey = new Map<string, { job_key: string; url: string; source: SourceJob }>();
+    for (const job of source.jobs) {
       if (!job.title) continue;
       let url: string;
       try {
@@ -94,33 +84,65 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
       const jobKey = inline
         ? generateInlineJobKey(companyId, canonicalCareersUrl, job.title)
         : generateJobKey(companyId, url);
-      if (byKey.has(jobKey)) continue;
-      byKey.set(jobKey, {
-        job_key: jobKey,
+      if (!byKey.has(jobKey)) byKey.set(jobKey, { job_key: jobKey, url, source: job });
+    }
+    const keyed = [...byKey.values()];
+
+    // What we already know about these jobs: department tags and when we first saw them.
+    const knownTags = new Map<string, DepartmentTag>();
+    const firstSeen = new Map<string, string>();
+    if (keyed.length > 0) {
+      const { data: existing } = await supabase
+        .from("jobs")
+        .select("job_key, department_tag, first_seen_at")
+        .eq("company_id", companyId)
+        .in("job_key", keyed.map((j) => j.job_key));
+      for (const row of existing ?? []) {
+        // "Other" is often a past fallback (e.g. the API was down), so re-classify those.
+        if (row.department_tag !== "Other") knownTags.set(row.job_key, row.department_tag as DepartmentTag);
+        const prev = firstSeen.get(row.job_key);
+        if (!prev || row.first_seen_at < prev) firstSeen.set(row.job_key, row.first_seen_at);
+      }
+    }
+    const { count: priorSnapshots } = await supabase
+      .from("snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
+      .eq("status", "published");
+
+    // Listing date for each job, then drop stale ones (very old, past school
+    // year, general applications). Checked after the guards above, which are
+    // about whether the source worked at all.
+    const now = new Date();
+    const stale: string[] = [];
+    const jobs: Omit<ProcessedJob, "department_tag">[] = [];
+    for (const { job_key, url, source: job } of keyed) {
+      const listedAt = resolveListingDate({
+        postedAt: job.posted_at,
+        existingFirstSeen: firstSeen.get(job_key),
+        companyHasHistory: (priorSnapshots ?? 0) > 0,
+        now,
+      });
+      const reason = staleReason(job, now, listedAt);
+      if (reason) {
+        stale.push(`${job.title} (${reason})`);
+        continue;
+      }
+      jobs.push({
+        job_key,
         title: job.title,
         department_raw: job.department_raw,
         location: job.location,
         salary_raw: cleanSalary(job.salary_raw),
         description: job.description ?? "",
         job_url: url,
-        posted_at: job.posted_at ?? null,
+        first_seen_at: listedAt,
       });
     }
-    const jobs = [...byKey.values()];
-
-    // Reuse department tags for jobs we've already seen (stable + saves LLM calls).
-    const knownTags = new Map<string, DepartmentTag>();
-    if (jobs.length > 0) {
-      const { data: existing } = await supabase
-        .from("jobs")
-        .select("job_key, department_tag")
-        .eq("company_id", companyId)
-        .in("job_key", jobs.map((j) => j.job_key));
-      // "Other" is often a past fallback (e.g. the API was down), so re-classify those.
-      for (const row of existing ?? []) {
-        if (row.department_tag !== "Other") knownTags.set(row.job_key, row.department_tag as DepartmentTag);
-      }
+    if (stale.length) {
+      console.log(`[ingest] ${company.name}: dropped ${stale.length} stale: ${stale.join("; ").slice(0, 1500)}`);
     }
+
     const unknown = jobs.filter((j) => !knownTags.has(j.job_key));
     const newTags = await classifyDepartments(unknown);
     unknown.forEach((j, i) => knownTags.set(j.job_key, newTags[i]));

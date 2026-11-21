@@ -10,8 +10,8 @@ export interface ProcessedJob {
   salary_raw: string | null;
   description: string;
   job_url: string;
-  /** When the company posted it, if the source says (ISO 8601). */
-  posted_at?: string | null;
+  /** Listing date (see lib/listing-date.ts); stored as first_seen_at. */
+  first_seen_at: string;
 }
 
 export async function publishSnapshot(
@@ -32,39 +32,7 @@ export async function publishSnapshot(
   }
 
   try {
-    // 2. Look up existing first_seen_at values for these job_keys
-    const jobKeys = jobs.map((j) => j.job_key);
-    const { data: existingJobs } =
-      jobKeys.length > 0
-        ? await supabase
-            .from("jobs")
-            .select("job_key, first_seen_at")
-            .eq("company_id", companyId)
-            .in("job_key", jobKeys)
-        : { data: [] };
-
-    const firstSeenMap = new Map<string, string>();
-    if (existingJobs) {
-      for (const ej of existingJobs) {
-        // Keep the earliest first_seen_at per job_key
-        const existing = firstSeenMap.get(ej.job_key);
-        if (!existing || ej.first_seen_at < existing) {
-          firstSeenMap.set(ej.job_key, ej.first_seen_at);
-        }
-      }
-    }
-
-    // 3. Insert job rows.
-    // first_seen_at is the role's listing date: the earliest of when the company
-    // says it was posted and when this board first saw it. New roles with no
-    // posting date get "now" (the daily refresh sees them within a day).
-    const now = new Date().toISOString();
-    const listedAt = (j: ProcessedJob): string => {
-      const candidates = [firstSeenMap.get(j.job_key), validPastDate(j.posted_at)].filter(
-        (d): d is string => !!d
-      );
-      return candidates.length ? candidates.sort()[0] : now;
-    };
+    // 2. Insert job rows (listing dates were resolved by the caller).
     const jobRows = jobs.map((j) => ({
       job_key: j.job_key,
       snapshot_id: snapshot.id,
@@ -76,7 +44,7 @@ export async function publishSnapshot(
       salary_raw: j.salary_raw,
       description: j.description,
       job_url: j.job_url,
-      first_seen_at: listedAt(j),
+      first_seen_at: j.first_seen_at,
     }));
 
     // An empty snapshot is valid: it means the company has no open roles right now.
@@ -123,10 +91,3 @@ export async function failSnapshot(
   });
 }
 
-/** Normalises to ISO, rejecting unparseable dates and dates in the future. */
-function validPastDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime()) || d.getTime() > Date.now() + 86_400_000) return null;
-  return d.toISOString();
-}

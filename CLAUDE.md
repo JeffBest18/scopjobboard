@@ -47,7 +47,7 @@ Per company (`run.ts` → `sources/index.ts#collectJobs`), most reliable source 
 
 Then: batched department classification (`classify-department.ts`, tags reused for known job_keys) → `publishSnapshot`.
 
-Listing date: `jobs.first_seen_at` is the earliest of the source's posting date (ATS field, JSON-LD `datePosted`, or a date Claude reads off a scraped page) and when the board first saw the role. The board sorts and filters on it ("Newest first", `?posted=7|30`).
+Listing date (`lib/listing-date.ts`, stored in `jobs.first_seen_at`): the earliest of the source's posting date (ATS field, JSON-LD `datePosted`, or a date Claude reads off a scraped page) and when the board first saw the role. Undated roles seen on a company's first load (or during the 2026-11-19/20 backfill) get `1970-01-01` = unknown: no date shown, never "recent", last in "Newest first". The board sorts/filters on it ("Newest first", `?posted=7|30`), and the 6-month staleness rule uses it.
 
 Stale postings (`staleness.ts`) are dropped at ingestion even if the source still lists them: general/open applications, postings older than `MAX_POSTING_AGE_DAYS` (default 180; dates come from the ATS or JSON-LD `datePosted`), and titles naming a school year that has ended (e.g. "Tutor '25/'26"). Backstop at read time (`lib/freshness.ts`): auto-ingested companies whose jobs haven't been confirmed by a successful run in 30 days are hidden from the board, job pages, `/r` and the sitemap.
 

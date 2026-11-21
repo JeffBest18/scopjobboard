@@ -1,4 +1,5 @@
 import type { SourceJob } from "./sources";
+import { isUnknownListingDate } from "../listing-date";
 
 /**
  * Postings older than this are dropped even if the company's job system still
@@ -13,15 +14,17 @@ const GENERAL_APPLICATION =
 /**
  * Returns why a posting is stale, or null if it's current. Three rules:
  *  1. It's a general/open application, not a role.
- *  2. Its source says it was posted more than MAX_POSTING_AGE_DAYS ago.
+ *  2. It was listed more than MAX_POSTING_AGE_DAYS ago: the listing date the
+ *     board shows (earliest of the source's posting date and when we first saw it).
  *  3. Its title names a school year that has already ended (e.g. "Tutor '25/'26").
  */
-export function staleReason(job: SourceJob, now: Date = new Date()): string | null {
+export function staleReason(job: SourceJob, now: Date = new Date(), listedAt?: string | null): string | null {
   if (GENERAL_APPLICATION.test(job.title)) return "general application";
 
-  if (job.posted_at) {
-    const days = Math.floor((now.getTime() - new Date(job.posted_at).getTime()) / 86_400_000);
-    if (days > MAX_POSTING_AGE_DAYS) return `posted ${days} days ago`;
+  const since = listedAt && !isUnknownListingDate(listedAt) ? listedAt : job.posted_at;
+  if (since) {
+    const days = Math.floor((now.getTime() - new Date(since).getTime()) / 86_400_000);
+    if (days > MAX_POSTING_AGE_DAYS) return `listed ${days} days ago`;
   }
 
   const schoolYear = endedSchoolYear(job.title, now);

@@ -14,6 +14,7 @@ import {
 } from "@/lib/board-params";
 import { Pagination } from "@/components/pagination";
 import { formatSalary } from "@/lib/ingestion/clean-salary";
+import { isUnknownListingDate } from "@/lib/listing-date";
 
 /** Roles shown per company in the grouped overview before "View all". */
 const GROUP_PREVIEW = 3;
@@ -23,8 +24,12 @@ const DAY_MS = 86_400_000;
 /** Server render time, so relative dates and "past week" match between server and browser. */
 const NowContext = createContext(0);
 
-/** Days since a role was listed (first_seen_at = posting date when known, else first seen). */
+/**
+ * Days since a role was listed (see lib/listing-date.ts). Roles whose date is
+ * unknown return Infinity: never "recent", always last in "Newest first".
+ */
 function daysListed(job: BoardJob, nowMs: number): number {
+  if (isUnknownListingDate(job.first_seen_at)) return Infinity;
   return Math.max(0, Math.floor((nowMs - new Date(job.first_seen_at).getTime()) / DAY_MS));
 }
 
@@ -236,7 +241,7 @@ export function JobBoard({ jobs, companies, initialState, basePath, now }: JobBo
 
       {/* Posted-date chips */}
       <div className="mt-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by posting date">
-        <span className="mr-1 w-20 text-xs text-gray-400">Posted</span>
+        <span className="mr-1 w-20 text-xs text-gray-400">Listed</span>
         <Chip active={!state.posted} onClick={() => setPosted(null)}>
           Any time
         </Chip>
@@ -473,9 +478,14 @@ function RoleRow({ job, showCompany }: { job: BoardJob; showCompany?: boolean })
               {formatSalary(job.salary_raw)}
             </span>
           )}
-          <span className={days <= 7 ? "font-medium text-emerald-600" : "text-gray-400"} title={new Date(job.first_seen_at).toDateString()}>
-            {postedLabel(days, job.first_seen_at, nowMs)}
-          </span>
+          {Number.isFinite(days) && (
+            <span
+              className={days <= 7 ? "font-medium text-emerald-600" : "text-gray-400"}
+              title={new Date(job.first_seen_at).toDateString()}
+            >
+              {listedLabel(days, job.first_seen_at, nowMs)}
+            </span>
+          )}
         </div>
       </div>
       <span className="shrink-0 text-gray-300 transition-colors duration-150 group-hover:text-black">
@@ -683,7 +693,7 @@ function summarize(
           ? ` across ${companyCount} ${companyCount === 1 ? "company" : "companies"}`
           : "";
   const search = q ? ` matching “${q}”` : "";
-  const when = posted === 7 ? " posted in the past week" : posted === 30 ? " posted in the past month" : "";
+  const when = posted === 7 ? " listed in the past week" : posted === 30 ? " listed in the past month" : "";
   const order = companyCount === null && companies.length === 0 ? ", newest first" : "";
   return `${roles}${when}${where}${search}${order}`;
 }
@@ -696,13 +706,13 @@ function hostname(url: string): string {
   }
 }
 
-/** "Posted today", "Posted 3 days ago", "Posted 2 weeks ago", "Posted Mar 4". */
-function postedLabel(days: number, iso: string, nowMs: number): string {
-  if (days === 0) return "Posted today";
-  if (days === 1) return "Posted yesterday";
-  if (days < 14) return `Posted ${days} days ago`;
-  if (days < 60) return `Posted ${Math.floor(days / 7)} weeks ago`;
+/** "Listed today", "Listed 3 days ago", "Listed 2 weeks ago", "Listed Mar 4". */
+function listedLabel(days: number, iso: string, nowMs: number): string {
+  if (days === 0) return "Listed today";
+  if (days === 1) return "Listed yesterday";
+  if (days < 14) return `Listed ${days} days ago`;
+  if (days < 60) return `Listed ${Math.floor(days / 7)} weeks ago`;
   const d = new Date(iso);
   const sameYear = d.getUTCFullYear() === new Date(nowMs).getUTCFullYear();
-  return `Posted ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: sameYear ? undefined : "numeric", timeZone: "UTC" })}`;
+  return `Listed ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: sameYear ? undefined : "numeric", timeZone: "UTC" })}`;
 }
