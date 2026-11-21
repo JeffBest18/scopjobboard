@@ -70,7 +70,7 @@ export default async function Home({
               <h2 className="mb-6 text-4xl font-light tracking-tight text-black">
                 Open Positions
               </h2>
-              <JobBoard jobs={jobs} companies={companies} initialState={initialState} basePath="/" />
+              <JobBoard jobs={jobs} companies={companies} initialState={initialState} now={new Date().toISOString()} basePath="/" />
             </>
           }
         />

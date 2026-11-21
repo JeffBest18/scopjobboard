@@ -103,6 +103,7 @@ export async function runIngestion(companyId: string): Promise<IngestionResult> 
         salary_raw: cleanSalary(job.salary_raw),
         description: job.description ?? "",
         job_url: url,
+        posted_at: job.posted_at ?? null,
       });
     }
     const jobs = [...byKey.values()];

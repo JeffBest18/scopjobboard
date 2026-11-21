@@ -75,7 +75,8 @@ Rules:
 - Do not include generic links such as "View all jobs", "General application", or "Talent community" unless the page lists nothing else.
 - "url" is the link to that specific posting exactly as it appears in the Markdown (relative links are fine). Use "" if the role has no link of its own.
 - "summary" is any description text shown for the role on this page, in Markdown; "" if none.
-- Use "" for any field the page doesn't state. Do not guess locations, departments, or salaries.
+- "posted" is the date the role was posted, only if the page shows one (e.g. "Posted Nov 3" or "3 days ago"), as YYYY-MM-DD using today's date given below; otherwise "".
+- Use "" for any field the page doesn't state. Do not guess locations, departments, salaries, or dates.
 - Set "no_open_roles_stated" to true only if the page explicitly says there are currently no open positions.`;
 
 const LISTING_SCHEMA = {
@@ -89,7 +90,7 @@ const LISTING_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "url", "location", "department", "salary", "summary"],
+        required: ["title", "url", "location", "department", "salary", "summary", "posted"],
         properties: {
           title: { type: "string" },
           url: { type: "string" },
@@ -97,6 +98,7 @@ const LISTING_SCHEMA = {
           department: { type: "string" },
           salary: { type: "string" },
           summary: { type: "string" },
+          posted: { type: "string" },
         },
       },
     },
@@ -105,24 +107,26 @@ const LISTING_SCHEMA = {
 
 interface ListingOutput {
   no_open_roles_stated: boolean;
-  jobs: { title: string; url: string; location: string; department: string; salary: string; summary: string }[];
+  jobs: { title: string; url: string; location: string; department: string; salary: string; summary: string; posted: string }[];
 }
 
 const DETAIL_SYSTEM = `You read a single job posting page (converted to Markdown) and return its details.
 
 - "description": the full job description in Markdown — overview, responsibilities, requirements, benefits, about the company. Keep headings and bullet points. Remove site navigation, footers, cookie notices, application forms, and the short metadata lines (title, location, department, salary, employment type) at the top.
 - "location", "department", "salary": only if explicitly shown; otherwise "".
+- "posted": the date the role was posted, only if shown (e.g. "Posted Nov 3", "3 days ago"), as YYYY-MM-DD using today's date given below; otherwise "".
 - If the page is not a job posting or has no description, return "" for description.`;
 
 const DETAIL_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["description", "location", "department", "salary"],
+  required: ["description", "location", "department", "salary", "posted"],
   properties: {
     description: { type: "string" },
     location: { type: "string" },
     department: { type: "string" },
     salary: { type: "string" },
+    posted: { type: "string" },
   },
 };
 
@@ -138,7 +142,7 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
 
   const listing = await extractJson<ListingOutput>({
     system: LISTING_SYSTEM,
-    user: `Careers page URL: ${careersUrl}\n\n<page>\n${markdown}\n</page>`,
+    user: `Today is ${today()}.\nCareers page URL: ${careersUrl}\n\n<page>\n${markdown}\n</page>`,
     schema: LISTING_SCHEMA,
   });
 
@@ -179,7 +183,7 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
     let location = orNull(c.location);
     let department = orNull(c.department);
     let salary = orNull(c.salary);
-    let postedAt: string | null = null;
+    let postedAt: string | null = parsePosted(c.posted);
 
     if (c.url !== careersPage && detailBudget-- > 0) {
       try {
@@ -191,17 +195,18 @@ export async function scrapeCareersPage(careersUrl: string, html: string): Promi
           location ??= ld.location;
           department ??= ld.department;
           salary ??= ld.salary;
-          postedAt = ld.posted_at;
+          postedAt ??= ld.posted_at;
         } else if (detailMd.length > 200) {
-          const d = await extractJson<{ description: string; location: string; department: string; salary: string }>({
+          const d = await extractJson<{ description: string; location: string; department: string; salary: string; posted: string }>({
             system: DETAIL_SYSTEM,
-            user: `Job title: ${c.title}\nURL: ${c.url}\n\n<page>\n${detailMd}\n</page>`,
+            user: `Today is ${today()}.\nJob title: ${c.title}\nURL: ${c.url}\n\n<page>\n${detailMd}\n</page>`,
             schema: DETAIL_SCHEMA,
           });
           if (d.description.length > description.length) description = d.description;
           location ??= orNull(d.location);
           department ??= orNull(d.department);
           salary ??= orNull(d.salary);
+          postedAt ??= parsePosted(d.posted);
         }
       } catch (err) {
         console.warn(`[ingest] detail fetch failed for ${c.url}:`, err instanceof Error ? err.message : err);
@@ -230,4 +235,16 @@ function stripHash(url: string): string {
   const u = new URL(url);
   u.hash = "";
   return u.toString();
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** "2026-11-03" -> ISO; anything unparseable or in the future -> null. */
+function parsePosted(value: string | undefined): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
+  const d = new Date(`${value.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.getTime() > Date.now() + 86_400_000) return null;
+  return d.toISOString();
 }

@@ -4,14 +4,18 @@
  * `/?company=rogo&department=Engineering` are shareable.
  */
 
-export type BoardView = "company" | "all";
+export type BoardView = "company" | "newest";
+
+/** Only show roles listed within this many days (null = any time). */
+export type PostedWindow = 7 | 30 | null;
 
 export interface BoardState {
   q: string;
   departments: string[];
   companies: string[];
-  /** "company": grouped by company (default). "all": flat list, newest first. */
+  /** "company": grouped by company (default). "newest": flat list, most recently listed first. */
   view: BoardView;
+  posted: PostedWindow;
   page: number;
 }
 
@@ -20,7 +24,9 @@ export function boardStateFromParams(sp: URLSearchParams): BoardState {
     q: sp.get("q")?.trim() ?? "",
     departments: sp.getAll("department"),
     companies: sp.getAll("company"),
-    view: sp.get("view") === "all" ? "all" : "company",
+    // "all" is the old name for "newest"; keep old links working.
+    view: sp.get("view") === "newest" || sp.get("view") === "all" ? "newest" : "company",
+    posted: sp.get("posted") === "7" ? 7 : sp.get("posted") === "30" ? 30 : null,
     page: Math.max(1, Number(sp.get("page")) || 1),
   };
 }
@@ -39,7 +45,8 @@ export function boardStateToQuery(s: BoardState): string {
   if (s.q) sp.set("q", s.q);
   s.companies.forEach((c) => sp.append("company", c));
   s.departments.forEach((d) => sp.append("department", d));
-  if (s.view === "all") sp.set("view", "all");
+  if (s.view === "newest") sp.set("view", "newest");
+  if (s.posted) sp.set("posted", String(s.posted));
   if (s.page > 1) sp.set("page", String(s.page));
   const qs = sp.toString();
   return qs ? `?${qs}` : "";

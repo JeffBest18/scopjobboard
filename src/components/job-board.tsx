@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { DEPARTMENT_TAGS, JOBS_PER_PAGE } from "@/lib/constants";
@@ -10,6 +10,7 @@ import {
   boardStateToQuery,
   type BoardState,
   type BoardView,
+  type PostedWindow,
 } from "@/lib/board-params";
 import { Pagination } from "@/components/pagination";
 import { formatSalary } from "@/lib/ingestion/clean-salary";
@@ -17,11 +18,23 @@ import { formatSalary } from "@/lib/ingestion/clean-salary";
 /** Roles shown per company in the grouped overview before "View all". */
 const GROUP_PREVIEW = 3;
 
+const DAY_MS = 86_400_000;
+
+/** Server render time, so relative dates and "past week" match between server and browser. */
+const NowContext = createContext(0);
+
+/** Days since a role was listed (first_seen_at = posting date when known, else first seen). */
+function daysListed(job: BoardJob, nowMs: number): number {
+  return Math.max(0, Math.floor((nowMs - new Date(job.first_seen_at).getTime()) / DAY_MS));
+}
+
 interface JobBoardProps {
   jobs: BoardJob[];
   companies: BoardCompany[];
   initialState: BoardState;
   basePath: string;
+  /** ISO timestamp of the server render. */
+  now: string;
 }
 
 interface CompanyInfo {
@@ -35,7 +48,8 @@ interface CompanyInfo {
  * results list that is grouped by company by default so no single company's
  * volume buries the rest. All filtering is client-side; state lives in the URL.
  */
-export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardProps) {
+export function JobBoard({ jobs, companies, initialState, basePath, now }: JobBoardProps) {
+  const nowMs = useMemo(() => new Date(now).getTime(), [now]);
   const [state, setState] = useState<BoardState>(initialState);
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -85,15 +99,33 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
   const companySet = useMemo(() => new Set(state.companies), [state.companies]);
 
   const searched = useMemo(() => (q ? jobs.filter((j) => matchesSearch(j, q)) : jobs), [jobs, q]);
+  const inWindow = useMemo(
+    () => (state.posted ? searched.filter((j) => daysListed(j, nowMs) <= state.posted!) : searched),
+    [searched, state.posted, nowMs]
+  );
 
   // Faceted counts: each facet counts what you'd get if you picked it, given the other filters.
   const companyCounts = useMemo(
-    () => countBy(searched.filter((j) => !deptSet.size || deptSet.has(j.department_tag)), (j) => j.company_slug),
-    [searched, deptSet]
+    () => countBy(inWindow.filter((j) => !deptSet.size || deptSet.has(j.department_tag)), (j) => j.company_slug),
+    [inWindow, deptSet]
+  );
+  const postedCounts = useMemo(() => {
+    const pool = searched.filter(
+      (j) => (!companySet.size || companySet.has(j.company_slug)) && (!deptSet.size || deptSet.has(j.department_tag))
+    );
+    return {
+      7: pool.filter((j) => daysListed(j, nowMs) <= 7).length,
+      30: pool.filter((j) => daysListed(j, nowMs) <= 30).length,
+    };
+  }, [searched, companySet, deptSet, nowMs]);
+  /** Per company, roles listed in the past week (ignores filters, so the tiles stay stable). */
+  const newThisWeek = useMemo(
+    () => countBy(jobs.filter((j) => daysListed(j, nowMs) <= 7), (j) => j.company_slug),
+    [jobs, nowMs]
   );
   const inCompanies = useMemo(
-    () => searched.filter((j) => !companySet.size || companySet.has(j.company_slug)),
-    [searched, companySet]
+    () => inWindow.filter((j) => !companySet.size || companySet.has(j.company_slug)),
+    [inWindow, companySet]
   );
   const deptCounts = useMemo(() => countBy(inCompanies, (j) => j.department_tag), [inCompanies]);
   const results = useMemo(
@@ -102,8 +134,9 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
   );
 
   const selected = state.companies.map((s) => companyBySlug.get(s)).filter((c): c is CompanyInfo => !!c);
-  const mode: "detail" | "grouped" | "flat" = selected.length ? "detail" : state.view === "all" ? "flat" : "grouped";
-  const hasFilters = !!(q || state.departments.length || state.companies.length);
+  const mode: "detail" | "grouped" | "flat" = selected.length ? "detail" : state.view === "newest" ? "flat" : "grouped";
+  const hasFilters = !!(q || state.departments.length || state.companies.length || state.posted);
+  const clearAll = () => update({ q: "", departments: [], companies: [], posted: null }, { push: true });
 
   // ----- Actions ------------------------------------------------------------
 
@@ -114,6 +147,7 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
       departments: deptSet.has(tag) ? state.departments.filter((d) => d !== tag) : [...state.departments, tag],
     });
   const setView = (view: BoardView) => update({ view, companies: [] });
+  const setPosted = (posted: PostedWindow) => update({ posted });
   const goToPage = (page: number) => {
     update({ page });
     requestAnimationFrame(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -124,6 +158,7 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
   const visibleDepts = DEPARTMENT_TAGS.filter((t) => deptCounts.get(t) || deptSet.has(t));
 
   return (
+    <NowContext.Provider value={nowMs}>
     <div>
       {/* Company directory */}
       <section aria-labelledby="directory-heading" className="mb-10">
@@ -138,6 +173,7 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {hiring.map((c) => {
             const count = companyCounts.get(c.slug) ?? 0;
+            const fresh = newThisWeek.get(c.slug) ?? 0;
             const isSelected = companySet.has(c.slug);
             return (
               <button
@@ -155,8 +191,9 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
                 <CompanyLogo slug={c.slug} name={c.name} size={28} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-black">{c.name}</span>
-                  <span className="block text-xs text-gray-400">
+                  <span className="block truncate text-xs text-gray-400">
                     {count} {count === 1 ? "role" : "roles"}
+                    {fresh > 0 && <span className="text-emerald-600"> &middot; {fresh} new</span>}
                   </span>
                 </span>
               </button>
@@ -197,8 +234,23 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
         </div>
       </div>
 
+      {/* Posted-date chips */}
+      <div className="mt-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by posting date">
+        <span className="mr-1 w-20 text-xs text-gray-400">Posted</span>
+        <Chip active={!state.posted} onClick={() => setPosted(null)}>
+          Any time
+        </Chip>
+        {([7, 30] as const).map((days) => (
+          <Chip key={days} active={state.posted === days} onClick={() => setPosted(state.posted === days ? null : days)}>
+            {days === 7 ? "Past week" : "Past month"}
+            <span className={state.posted === days ? "text-gray-300" : "text-gray-400"}>{postedCounts[days]}</span>
+          </Chip>
+        ))}
+      </div>
+
       {/* Department chips */}
-      <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Filter by department">
+      <div className="mt-2 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by department">
+        <span className="mr-1 w-20 text-xs text-gray-400">Department</span>
         <Chip active={!state.departments.length} onClick={() => update({ departments: [] })}>
           All departments
         </Chip>
@@ -213,12 +265,12 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
       {/* Result summary */}
       <div className="mt-6 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm text-gray-500" aria-live="polite">
-          {summarize(results.length, selected, state.departments, state.q.trim(), mode === "grouped" ? countDistinct(results) : null)}
+          {summarize(results.length, selected, state.departments, state.q.trim(), mode === "grouped" ? countDistinct(results) : null, state.posted)}
         </p>
         {hasFilters && (
           <button
             type="button"
-            onClick={() => update({ q: "", departments: [], companies: [] }, { push: true })}
+            onClick={clearAll}
             className="text-xs text-gray-400 underline-offset-2 transition-colors hover:text-black hover:underline"
           >
             Clear filters
@@ -229,9 +281,7 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
       {/* Results */}
       <div className="mt-4">
         {results.length === 0 ? (
-          <EmptyState
-            onClear={() => update({ q: "", departments: [], companies: [] }, { push: true })}
-          />
+          <EmptyState onClear={clearAll} />
         ) : mode === "grouped" ? (
           <GroupedResults results={results} companyBySlug={companyBySlug} onOpenCompany={openCompany} />
         ) : (
@@ -244,6 +294,7 @@ export function JobBoard({ jobs, companies, initialState, basePath }: JobBoardPr
         )}
       </div>
     </div>
+    </NowContext.Provider>
   );
 }
 
@@ -395,6 +446,8 @@ function RoleList({ jobs, showCompany }: { jobs: BoardJob[]; showCompany?: boole
 }
 
 function RoleRow({ job, showCompany }: { job: BoardJob; showCompany?: boolean }) {
+  const nowMs = useContext(NowContext);
+  const days = daysListed(job, nowMs);
   return (
     <Link
       href={`/jobs/${job.job_key}`}
@@ -420,6 +473,9 @@ function RoleRow({ job, showCompany }: { job: BoardJob; showCompany?: boolean })
               {formatSalary(job.salary_raw)}
             </span>
           )}
+          <span className={days <= 7 ? "font-medium text-emerald-600" : "text-gray-400"} title={new Date(job.first_seen_at).toDateString()}>
+            {postedLabel(days, job.first_seen_at, nowMs)}
+          </span>
         </div>
       </div>
       <span className="shrink-0 text-gray-300 transition-colors duration-150 group-hover:text-black">
@@ -479,7 +535,7 @@ function SearchInput({ value, onChange }: { value: string; onChange: (value: str
 function ViewToggle({ view, onChange }: { view: BoardView; onChange: (view: BoardView) => void }) {
   const options: { value: BoardView; label: string }[] = [
     { value: "company", label: "By company" },
-    { value: "all", label: "All roles" },
+    { value: "newest", label: "Newest first" },
   ];
   return (
     <div role="radiogroup" aria-label="Layout" className="flex rounded-lg border border-gray-300 p-0.5">
@@ -613,7 +669,8 @@ function summarize(
   companies: CompanyInfo[],
   departments: string[],
   q: string,
-  companyCount: number | null
+  companyCount: number | null,
+  posted: PostedWindow
 ): string {
   const dept = departments.length === 1 ? `${departments[0]} ` : "";
   const roles = `${count} ${dept}${count === 1 ? "role" : "roles"}`;
@@ -626,8 +683,9 @@ function summarize(
           ? ` across ${companyCount} ${companyCount === 1 ? "company" : "companies"}`
           : "";
   const search = q ? ` matching “${q}”` : "";
+  const when = posted === 7 ? " posted in the past week" : posted === 30 ? " posted in the past month" : "";
   const order = companyCount === null && companies.length === 0 ? ", newest first" : "";
-  return `${roles}${where}${search}${order}`;
+  return `${roles}${when}${where}${search}${order}`;
 }
 
 function hostname(url: string): string {
@@ -636,4 +694,15 @@ function hostname(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** "Posted today", "Posted 3 days ago", "Posted 2 weeks ago", "Posted Mar 4". */
+function postedLabel(days: number, iso: string, nowMs: number): string {
+  if (days === 0) return "Posted today";
+  if (days === 1) return "Posted yesterday";
+  if (days < 14) return `Posted ${days} days ago`;
+  if (days < 60) return `Posted ${Math.floor(days / 7)} weeks ago`;
+  const d = new Date(iso);
+  const sameYear = d.getUTCFullYear() === new Date(nowMs).getUTCFullYear();
+  return `Posted ${d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: sameYear ? undefined : "numeric", timeZone: "UTC" })}`;
 }

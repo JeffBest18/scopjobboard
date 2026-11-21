@@ -10,6 +10,8 @@ export interface ProcessedJob {
   salary_raw: string | null;
   description: string;
   job_url: string;
+  /** When the company posted it, if the source says (ISO 8601). */
+  posted_at?: string | null;
 }
 
 export async function publishSnapshot(
@@ -52,8 +54,17 @@ export async function publishSnapshot(
       }
     }
 
-    // 3. Insert job rows
+    // 3. Insert job rows.
+    // first_seen_at is the role's listing date: the earliest of when the company
+    // says it was posted and when this board first saw it. New roles with no
+    // posting date get "now" (the daily refresh sees them within a day).
     const now = new Date().toISOString();
+    const listedAt = (j: ProcessedJob): string => {
+      const candidates = [firstSeenMap.get(j.job_key), validPastDate(j.posted_at)].filter(
+        (d): d is string => !!d
+      );
+      return candidates.length ? candidates.sort()[0] : now;
+    };
     const jobRows = jobs.map((j) => ({
       job_key: j.job_key,
       snapshot_id: snapshot.id,
@@ -65,7 +76,7 @@ export async function publishSnapshot(
       salary_raw: j.salary_raw,
       description: j.description,
       job_url: j.job_url,
-      first_seen_at: firstSeenMap.get(j.job_key) ?? now,
+      first_seen_at: listedAt(j),
     }));
 
     // An empty snapshot is valid: it means the company has no open roles right now.
@@ -110,4 +121,12 @@ export async function failSnapshot(
     job_count: 0,
     error_message: errorMessage,
   });
+}
+
+/** Normalises to ISO, rejecting unparseable dates and dates in the future. */
+function validPastDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime()) || d.getTime() > Date.now() + 86_400_000) return null;
+  return d.toISOString();
 }

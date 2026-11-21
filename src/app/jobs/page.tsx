@@ -21,7 +21,7 @@ export default async function JobsPage({
       <h1 className="mb-6 text-4xl font-light tracking-tight text-black">
         Open Positions
       </h1>
-      <JobBoard jobs={jobs} companies={companies} initialState={initialState} basePath="/jobs" />
+      <JobBoard jobs={jobs} companies={companies} initialState={initialState} now={new Date().toISOString()} basePath="/jobs" />
     </div>
   );
 }
